@@ -1,0 +1,52 @@
+[general]
+dry_run = true
+clob_url = "https://clob.polymarket.com"
+ws_url = "wss://ws-subscriptions-clob.polymarket.com"
+gamma_url = "https://gamma-api.polymarket.com"
+use_server_time = true
+tick_interval_ms = 5000
+dashboard_port = 3030
+
+[risk]
+max_position_size = 50.0       # max shares per token
+max_open_orders = 10           # max live orders per token
+max_total_exposure_usd = 200.0 # max total capital at risk
+daily_loss_limit_usd = 20.0    # stop trading if daily PnL < -$20
+min_balance_usd = 10.0         # min USDC balance to keep trading
+
+[market_maker]
+half_spread = 0.02             # 2 cents each side of mid
+min_edge = 0.005               # skip if spread < 0.5 cents
+requote_threshold = 0.01       # re-quote if mid moves > 1 cent
+order_size = 10.0              # shares per order
+num_levels = 1                 # price levels per side
+level_spacing = 0.01           # spacing between levels
+inventory_skew_factor = 0.005  # skew per unit of inventory
+
+[market_selection]
+# Starmer out by June 30, 2026? (YES) - $17k 24h vol
+# MicroStrategy sells Bitcoin by March 31, 2026? (YES) - $12k 24h vol
+token_ids = [
+    "34554555827438551101000555305203609600029621153428996114009350892614396532498",
+    "108547978327958467449318042977006580876058560639743186491243488736783119648127",
+]
+condition_ids = []
+min_liquidity = 1000.0
+min_volume_24h = 500.0
+
+[copy_trader]
+enabled = true
+leaders = []                    # add specific wallet addresses here
+auto_discover = true
+auto_discover_count = 20
+auto_discover_category = "OVERALL"
+min_closed_trades = 10          # minimum closed positions to qualify
+scorer_interval_secs = 600      # re-score wallets every 10 min
+poll_interval_secs = 30
+scale_factor = 0.1              # mirror 10% of leader size
+min_position_usd = 5.0
+max_slippage = 0.02
+max_entry_price = 0.97              # hard ceiling (safety net)
+max_entry_drift = 0.05              # max price above leader's entry (5 cents)
+max_days_to_resolution = 4
+exclude_title_keywords = []

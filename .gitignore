@@ -1,6 +1,9 @@
 .DS_Store
 .env
 
+# Bot runtime data
+bot/data/
+
 # ------- <Rust> -------
 # https://github.com/github/gitignore/blob/main/Rust.gitignore
 
