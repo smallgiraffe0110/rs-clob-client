@@ -8,11 +8,15 @@ rust-version = "1.88.0"
 name = "polymarket-bot"
 path = "src/main.rs"
 
+[[bin]]
+name = "fund_proxy"
+path = "src/bin/fund_proxy.rs"
+
 [dependencies]
 polymarket-client-sdk = { path = "..", features = [
     "clob",
-    "gamma",
     "data",
+    "gamma",
     "ws",
     "tracing",
     "heartbeats",
@@ -21,6 +25,13 @@ polymarket-client-sdk = { path = "..", features = [
 alloy = { version = "1.6.3", default-features = false, features = [
     "signer-local",
     "signers",
+    "network",
+    "providers",
+    "provider-http",
+    "contract",
+    "sol-types",
+    "transports",
+    "transport-http",
 ] }
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
@@ -35,6 +46,9 @@ thiserror = "2"
 tokio = { version = "1.49", features = ["rt-multi-thread", "macros", "signal", "net"] }
 toml = "0.8"
 axum = { version = "0.8", features = ["ws"] }
+rustls = { version = "0.23", features = ["ring"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.21", features = ["v4"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio-tungstenite = { version = "0.26", features = ["rustls-tls-webpki-roots"] }

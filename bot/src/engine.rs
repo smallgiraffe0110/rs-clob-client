@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anyhow::Result;
@@ -7,7 +8,7 @@ use polymarket_client_sdk::clob::ws::types::response::{
 };
 use polymarket_client_sdk::types::U256;
 use tokio::sync::{broadcast, mpsc};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::dashboard::{DashboardUpdate, PriceLevel};
 use crate::market_state::MarketState;
@@ -37,9 +38,12 @@ pub struct Engine {
     active_tokens: Vec<U256>,
     dashboard_tx: broadcast::Sender<DashboardUpdate>,
     dry_run: bool,
+    /// Tracks trade IDs we've already processed to deduplicate WS replays.
+    seen_trade_ids: HashSet<String>,
 }
 
 impl Engine {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         market_state: Arc<MarketState>,
         order_manager: Arc<OrderManager>,
@@ -61,6 +65,7 @@ impl Engine {
             active_tokens,
             dashboard_tx,
             dry_run,
+            seen_trade_ids: HashSet::new(),
         }
     }
 
@@ -73,6 +78,24 @@ impl Engine {
                     self.handle_book_update(update).await;
                 }
                 EngineEvent::TradeConfirmed(trade) => {
+                    // The WS user stream replays the same fill multiple
+                    // times (matched → mined → confirmed). Only process
+                    // each trade_id once to avoid inflating positions.
+                    if !self.seen_trade_ids.insert(trade.id.clone()) {
+                        debug!(
+                            trade_id = %trade.id,
+                            status = ?trade.status,
+                            "duplicate fill ignored"
+                        );
+                        continue;
+                    }
+
+                    // Prevent unbounded memory growth: when the set gets
+                    // large, clear it. Old IDs won't reappear.
+                    if self.seen_trade_ids.len() > 1000 {
+                        self.seen_trade_ids.clear();
+                    }
+
                     self.handle_trade(trade).await;
                 }
                 EngineEvent::OrderUpdate(order) => {
@@ -147,6 +170,23 @@ impl Engine {
             Side::Sell => "SELL",
             _ => "UNKNOWN",
         };
+
+        // Only process fills for tokens the bot manages: either already in
+        // positions (from disk or prior fills) or with a live order in the
+        // order manager.  This prevents manual/external trades on the same
+        // proxy wallet from contaminating position tracking.
+        let known = self.positions.has_position(&token_id)
+            || !self.order_manager.live_order_ids_for_token(&token_id).is_empty();
+        if !known {
+            debug!(
+                token_id = %token_id,
+                side = side_str,
+                size = %size,
+                price = %price,
+                "ignoring external fill (not a bot-managed token)"
+            );
+            return;
+        }
 
         info!(
             token_id = %token_id,
@@ -246,7 +286,7 @@ impl Engine {
         info!(daily_pnl = %daily_pnl, realized = %realized, unrealized = %unrealized, exposure = %exposure, "tick summary");
 
         let _ = self.dashboard_tx.send(DashboardUpdate::TickSummary {
-            daily_pnl: daily_pnl.to_string(),
+            total_pnl: daily_pnl.to_string(),
             total_exposure: exposure.to_string(),
         });
 
@@ -271,90 +311,108 @@ impl Engine {
             // In dry-run mode, check risk and simulate fills one-by-one
             // so each fill updates positions before the next risk check.
             for action in actions {
-                match &action {
-                    StrategyAction::PlaceOrder {
-                        token_id,
-                        side,
-                        price,
-                        size,
-                        ..
-                    } => {
-                        let exposure = *price * *size;
-                        if let Some(veto) = self.risk.check_order(
-                            token_id,
-                            *size,
-                            exposure,
-                            &self.positions,
-                        ) {
-                            warn!(veto = %veto, "risk check failed, skipping order");
-                            continue;
-                        }
-
-                        let side_str = match side {
-                            Side::Buy => "BUY",
-                            Side::Sell => "SELL",
-                            _ => "UNKNOWN",
-                        };
-
-                        info!(
-                            dry_run = true,
-                            token_id = %token_id,
-                            side = side_str,
-                            price = %price,
-                            size = %size,
-                            "simulated fill"
-                        );
-
-                        // Simulate the fill
-                        self.positions.record_fill(*token_id, *side, *size, *price);
-
-                        let _ = self.dashboard_tx.send(DashboardUpdate::Trade {
-                            token_id: token_id.to_string(),
-                            side: side_str.to_string(),
-                            size: size.to_string(),
-                            price: price.to_string(),
-                        });
-
-                        if let Some(pos) = self.positions.get_position(token_id) {
-                            let mark = self.market_state.get_book(token_id).and_then(|b| b.midpoint()).unwrap_or(*price);
-                            let _ =
-                                self.dashboard_tx
-                                    .send(DashboardUpdate::PositionUpdate {
-                                        token_id: token_id.to_string(),
-                                        net_size: pos.net_size.to_string(),
-                                        avg_entry_price: pos.avg_entry_price.to_string(),
-                                        realized_pnl: pos.realized_pnl.to_string(),
-                                        unrealized_pnl: pos.unrealized_pnl(mark).to_string(),
-                                    });
-                        }
-                    }
-                    _ => {}
-                }
-            }
-            return;
-        }
-
-        // Live mode: batch risk check then execute
-        let mut approved = Vec::new();
-
-        for action in actions {
-            match &action {
-                StrategyAction::PlaceOrder {
+                if let StrategyAction::PlaceOrder {
                     token_id,
+                    side,
                     price,
                     size,
-                    taker: _,
                     ..
-                } => {
+                } = &action
+                {
                     let exposure = *price * *size;
                     if let Some(veto) = self.risk.check_order(
                         token_id,
+                        *side,
                         *size,
                         exposure,
                         &self.positions,
                     ) {
                         warn!(veto = %veto, "risk check failed, skipping order");
                         continue;
+                    }
+
+                    let side_str = match side {
+                        Side::Buy => "BUY",
+                        Side::Sell => "SELL",
+                        _ => "UNKNOWN",
+                    };
+
+                    // Simulate the fill at the current market price rather than the
+                    // limit price (which includes slippage). This gives realistic
+                    // paper PnL — in live trading, taker orders fill at the book's
+                    // price, not our padded limit.
+                    let fill_price = self
+                        .market_state
+                        .get_book(token_id)
+                        .and_then(|b| b.midpoint())
+                        .unwrap_or(*price);
+
+                    info!(
+                        dry_run = true,
+                        token_id = %token_id,
+                        side = side_str,
+                        limit_price = %price,
+                        fill_price = %fill_price,
+                        size = %size,
+                        "simulated fill"
+                    );
+                    self.positions.record_fill(*token_id, *side, *size, fill_price);
+
+                    let _ = self.dashboard_tx.send(DashboardUpdate::Trade {
+                        token_id: token_id.to_string(),
+                        side: side_str.to_string(),
+                        size: size.to_string(),
+                        price: fill_price.to_string(),
+                    });
+
+                    if let Some(pos) = self.positions.get_position(token_id) {
+                        let mark = self.market_state.get_book(token_id).and_then(|b| b.midpoint()).unwrap_or(fill_price);
+                        let _ =
+                            self.dashboard_tx
+                                .send(DashboardUpdate::PositionUpdate {
+                                    token_id: token_id.to_string(),
+                                    net_size: pos.net_size.to_string(),
+                                    avg_entry_price: pos.avg_entry_price.to_string(),
+                                    realized_pnl: pos.realized_pnl.to_string(),
+                                    unrealized_pnl: pos.unrealized_pnl(mark).to_string(),
+                                });
+                    }
+                }
+            }
+            return;
+        }
+
+        // Live mode: risk check each order, tracking pending exposure from
+        // orders already approved in this batch (fills are async, so the
+        // position tracker won't reflect them until later).
+        let mut approved = Vec::new();
+        let mut pending_exposure = rust_decimal::Decimal::ZERO;
+
+        for action in actions {
+            match &action {
+                StrategyAction::PlaceOrder {
+                    token_id,
+                    side,
+                    price,
+                    size,
+                    taker: _,
+                } => {
+                    let exposure = *price * *size;
+                    if let Some(veto) = self.risk.check_order_with_pending(
+                        token_id,
+                        *side,
+                        *size,
+                        exposure,
+                        &self.positions,
+                        pending_exposure,
+                    ) {
+                        warn!(veto = %veto, "risk check failed, skipping order");
+                        continue;
+                    }
+                    // Track this order's exposure so subsequent checks in
+                    // the same batch see the cumulative total.
+                    if matches!(side, Side::Buy) {
+                        pending_exposure += exposure;
                     }
                     approved.push(action);
                 }
@@ -363,10 +421,10 @@ impl Engine {
             }
         }
 
-        if !approved.is_empty() {
-            if let Err(e) = self.order_manager.execute(approved).await {
-                error!(error = %e, "order execution error");
-            }
+        if !approved.is_empty()
+            && let Err(e) = self.order_manager.execute(approved).await
+        {
+            error!(error = %e, "order execution error");
         }
     }
 }

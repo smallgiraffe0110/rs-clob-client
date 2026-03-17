@@ -1,18 +1,21 @@
 [general]
-dry_run = true
+dry_run = false
 clob_url = "https://clob.polymarket.com"
-ws_url = "wss://ws-subscriptions-clob.polymarket.com"
-gamma_url = "https://gamma-api.polymarket.com"
 use_server_time = true
 tick_interval_ms = 5000
 dashboard_port = 3030
+dashboard_bind = "127.0.0.1"
+signature_type = "gnosis_safe"        # trades go through proxy wallet → visible on Polymarket UI
 
 [risk]
-max_position_size = 50.0       # max shares per token
-max_open_orders = 10           # max live orders per token
-max_total_exposure_usd = 200.0 # max total capital at risk
-daily_loss_limit_usd = 20.0    # stop trading if daily PnL < -$20
-min_balance_usd = 10.0         # min USDC balance to keep trading
+initial_bankroll = 1100.0      # actual capital as of 2026-03-15
+max_exposure_pct = 0.95        # 95% of bankroll as max exposure
+max_position_size_pct = 0.10   # 10% of bankroll per position → $88
+daily_loss_limit_pct = 0.15    # stop trading if daily loss > 15% of bankroll → $132
+# Absolute fallbacks (used when initial_bankroll = 0)
+max_position_size = 110.0
+max_total_exposure_usd = 1045.0
+daily_loss_limit_usd = 165.0
 
 [market_maker]
 half_spread = 0.02             # 2 cents each side of mid
@@ -26,10 +29,7 @@ inventory_skew_factor = 0.005  # skew per unit of inventory
 [market_selection]
 # Starmer out by June 30, 2026? (YES) - $17k 24h vol
 # MicroStrategy sells Bitcoin by March 31, 2026? (YES) - $12k 24h vol
-token_ids = [
-    "34554555827438551101000555305203609600029621153428996114009350892614396532498",
-    "108547978327958467449318042977006580876058560639743186491243488736783119648127",
-]
+token_ids = []
 condition_ids = []
 min_liquidity = 1000.0
 min_volume_24h = 500.0
@@ -39,14 +39,55 @@ enabled = true
 leaders = []                    # add specific wallet addresses here
 auto_discover = true
 auto_discover_count = 20
-auto_discover_category = "OVERALL"
+auto_discover_categories = ["OVERALL", "POLITICS", "CRYPTO", "SPORTS"]
 min_closed_trades = 10          # minimum closed positions to qualify
 scorer_interval_secs = 600      # re-score wallets every 10 min
-poll_interval_secs = 30
-scale_factor = 0.1              # mirror 10% of leader size
-min_position_usd = 5.0
-max_slippage = 0.02
-max_entry_price = 0.97              # hard ceiling (safety net)
-max_entry_drift = 0.05              # max price above leader's entry (5 cents)
-max_days_to_resolution = 4
-exclude_title_keywords = []
+poll_interval_secs = 15             # faster polling for short-lived markets
+scale_factor = 0.05             # mirror 5% of leader size — profits justify bigger bets (was 3.5%)
+min_position_usd = 15.0
+max_slippage_pct = 0.03             # 3% of price (e.g. $0.015 on a $0.50 token)
+stop_loss_pct = 0.25                # stop loss at 25% (prevents -70% disasters)
+take_profit_price = 0.92            # sell at 92% to free capital faster for new entries
+max_entry_price = 0.85              # skip near-certainties (no upside)
+max_entry_drift = 0.08              # max price above leader's entry (8 cents, was 5)
+max_days_to_resolution = 7          # focus on near-term volatility
+min_days_to_resolution = 0          # allow same-day markets
+max_target_size = 75.0              # absolute cap (was $50, justified by performance)
+max_target_size_pct = 0.10          # 10% of bankroll per position → ~$88 target size
+min_cur_price = 0.25                # skip extreme longshots
+min_leaders_for_entry = 2           # require 2+ leaders to agree before entering
+exit_cooldown_secs = 1800           # 30 min cooldown after exiting before re-entry (applies to BOTH sides now)
+exit_absent_polls = 12              # leaders must be absent 12 polls (3 min) before we exit (was 3 = 45sec)
+warmup_polls = 0                    # 0 = go live immediately (set to 8 for first-time observation)
+near_expiry_days = 2                # markets within 2 days get relaxed guards
+near_expiry_max_entry_price = 0.82  # don't overpay even near expiry — need 18%+ upside (was 0.97)
+near_expiry_max_entry_drift = 0.15  # allow some momentum but not chasing (was 0.40)
+exclude_title_keywords = [
+    "Will the price of",       # crypto price range markets — leaders enter at $0.99, no edge for us
+    "dip to",                  # crypto dip markets — same issue
+    "reach $",                 # crypto threshold markets
+    "Up or Down",              # crypto 5-min direction markets — pure coin flips
+    "Spread",                  # sports point spreads — coin flips, no leader edge
+    "O/U",                     # over/under lines (e.g. "Grizzlies vs. 76ers: O/U 227.5")
+    " O ",                     # over/under alternate format
+    " U ",                     # under alternate format
+    "Over/Under",              # explicit O/U markets
+    "Map 1 Winner",            # esports sub-game bets — hyper-volatile, caused -70% loss
+    "Map 2 Winner",            # esports sub-game bets
+    "Map 3 Winner",            # esports sub-game bets
+    "Game 1 Winner",           # esports/dota sub-game bets
+    "Game 2 Winner",           # esports sub-game bets
+    "Game 3 Winner",           # esports sub-game bets
+    "Map Handicap",            # esports handicap bets
+]
+
+[btc_trader]
+enabled = true
+bet_size_usd = 5.0                 # $5 test mode — overnight pure-model validation
+min_probability = 0.70             # only trade when model says ≥70% — be selective, not every window
+min_edge = 0.08                    # model must beat market by ≥8% (price guard since hard cap removed)
+max_exposure_usd = 50.0            # max total BTC trader exposure per window
+poll_interval_ms = 500             # poll Binance every 500ms (2x/sec) for fast signal
+market_search_interval_secs = 60   # re-scan Polymarket for new BTC markets every 60s
+entry_window_secs = 210            # enter between 60s-210s (wait for signal, leave time for fill)
+vol_min_samples = 30               # need 30+ price samples before trading

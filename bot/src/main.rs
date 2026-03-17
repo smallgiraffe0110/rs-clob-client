@@ -1,3 +1,4 @@
+mod btc_trader;
 mod config;
 mod copy_tracker;
 mod dashboard;
@@ -6,6 +7,7 @@ mod engine;
 mod market_state;
 mod order_manager;
 mod position;
+mod redeemer;
 mod risk;
 mod strategy;
 mod wallet_scorer;
@@ -19,6 +21,7 @@ use alloy::signers::local::PrivateKeySigner;
 use anyhow::{Context, Result, bail};
 use futures::StreamExt as _;
 use polymarket_client_sdk::POLYGON;
+use polymarket_client_sdk::clob::types::SignatureType;
 use polymarket_client_sdk::clob::ws::WsMessage;
 use polymarket_client_sdk::types::U256;
 use tokio::sync::{RwLock, broadcast, mpsc};
@@ -34,12 +37,15 @@ use crate::strategy::market_maker::MarketMakerStrategy;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install rustls crypto provider before any TLS connections (WebSockets)
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     dotenvy::dotenv().ok();
 
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-                "info,polymarket_bot=debug,hyper_util=off,hyper=off,reqwest=off,h2=off,rustls=off"
+                "info,polymarket_bot=debug,polymarket_client_sdk::clob::client=off,hyper_util=off,hyper=off,reqwest=off,h2=off,rustls=off"
                     .into()
             }),
         )
@@ -66,11 +72,13 @@ async fn main() -> Result<()> {
         .map(|s| U256::from_str(s).context("parsing token_id"))
         .collect::<Result<Vec<_>>>()?;
 
-    if token_ids.is_empty() {
-        bail!("no token_ids configured — set market_selection.token_ids in config.toml");
+    if token_ids.is_empty() && !config.copy_trader.enabled {
+        bail!("no token_ids configured and copy_trader not enabled — set market_selection.token_ids in config.toml");
     }
 
-    info!(count = token_ids.len(), "subscribing to tokens");
+    if !token_ids.is_empty() {
+        info!(count = token_ids.len(), "subscribing to tokens");
+    }
 
     // Create signer
     let private_key = std::env::var("POLYMARKET_PRIVATE_KEY")
@@ -86,19 +94,56 @@ async fn main() -> Result<()> {
         .use_server_time(config.general.use_server_time)
         .build();
 
-    let clob_client =
-        polymarket_client_sdk::clob::Client::new(&config.general.clob_url, clob_config)?
-            .authentication_builder(&*signer)
-            .authenticate()
-            .await
-            .context("CLOB authentication failed")?;
+    let signature_type = match config.general.signature_type.as_str() {
+        "proxy" => Some(SignatureType::Proxy),
+        "gnosis_safe" | "safe" => Some(SignatureType::GnosisSafe),
+        _ => None, // "eoa" or default — no signature_type set
+    };
+
+    let mut auth_builder = polymarket_client_sdk::clob::Client::new(
+        &config.general.clob_url,
+        clob_config,
+    )?
+    .authentication_builder(&*signer);
+
+    if let Some(sig_type) = signature_type {
+        auth_builder = auth_builder.signature_type(sig_type);
+        info!(signature_type = %config.general.signature_type, "using proxy wallet routing");
+    }
+
+    let clob_client = auth_builder
+        .authenticate()
+        .await
+        .context("CLOB authentication failed")?;
 
     let clob_client = Arc::new(clob_client);
     info!("authenticated with CLOB API");
 
     // Create shared state
     let market_state = Arc::new(MarketState::new());
+
+    // Sync positions from Polymarket data API instead of stale local file.
+    // Query both EOA and proxy wallet to catch positions from before/after
+    // GnosisSafe routing was enabled.
     let positions = Arc::new(PositionTracker::new());
+    {
+        // Only sync EOA positions (old pre-proxy trades like Oscar bets).
+        // Bot-created proxy trades are tracked through WebSocket fills.
+        let eoa = signer.address();
+        let wallets = vec![eoa];
+        match position::sync_positions_from_api(&wallets, &positions).await {
+            Ok(count) => {
+                if count > 0 {
+                    info!(count, "synced positions from Polymarket API");
+                } else {
+                    info!("no open positions found on Polymarket API");
+                }
+            }
+            Err(e) => {
+                warn!(error = %e, "failed to sync positions from API, starting fresh");
+            }
+        }
+    }
     let order_manager = Arc::new(OrderManager::new(
         Arc::clone(&clob_client),
         Arc::clone(&signer),
@@ -147,8 +192,9 @@ async fn main() -> Result<()> {
         config.risk.clone(),
     );
     let dashboard_port = config.general.dashboard_port;
+    let dashboard_bind = config.general.dashboard_bind.clone();
     let dashboard_task = tokio::spawn(async move {
-        if let Err(e) = dashboard::start(dashboard_port, dashboard_state).await {
+        if let Err(e) = dashboard::start(&dashboard_bind, dashboard_port, dashboard_state).await {
             error!(error = %e, "dashboard error");
         }
     });
@@ -178,6 +224,8 @@ async fn main() -> Result<()> {
             tx.clone(),
             dashboard_tx_copy,
             Arc::clone(&scored_wallets),
+            config.risk.initial_bankroll,
+            config.risk.max_exposure_pct,
         );
         info!("copy trader enabled");
         let copy_handle = tokio::spawn(async move { copy_tracker.run().await });
@@ -187,34 +235,80 @@ async fn main() -> Result<()> {
         (None, None)
     };
 
+    // Auto-redeemer: periodically redeem resolved markets for USDC.e
+    // Also auto-sells positions trading at $0.99+ (near-certainty, no upside left)
+    let proxy_addr: alloy::primitives::Address =
+        "0x473a68e67807ddb2d62e7703f0ca2fd76903addc"
+            .parse()
+            .expect("valid proxy address");
+    let redeemer = redeemer::Redeemer::new(
+        Arc::clone(&signer),
+        Arc::clone(&positions),
+        Arc::clone(&order_manager),
+        vec![signer.address(), proxy_addr],
+        300, // check every 5 minutes
+    );
+    let redeemer_task = tokio::spawn(async move { redeemer.run().await });
+
+    // BTC 5-minute trader (if enabled)
+    let btc_task = if config.btc_trader.enabled {
+        let btc = btc_trader::BtcTrader::new(
+            config.btc_trader.clone(),
+            Arc::clone(&order_manager),
+            Arc::clone(&positions),
+        );
+        info!("BTC 5-min trader enabled");
+        Some(tokio::spawn(async move { btc.run().await }))
+    } else {
+        None
+    };
+
     // Orderbook WS (unauthenticated — orderbook is public data)
-    let ws_book = polymarket_client_sdk::clob::ws::Client::default();
     let tx_book = tx.clone();
     let book_token_ids = token_ids.clone();
 
     let book_task = tokio::spawn(async move {
-        let stream = match ws_book.subscribe_orderbook(book_token_ids) {
-            Ok(s) => s,
-            Err(e) => {
-                error!(error = %e, "failed to subscribe to orderbook");
-                return;
-            }
-        };
-        let mut stream = std::pin::pin!(stream);
-
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(update) => {
-                    if tx_book.send(EngineEvent::BookUpdate(update)).await.is_err() {
-                        break;
-                    }
+        if book_token_ids.is_empty() {
+            info!("no market-maker tokens configured, skipping orderbook WS");
+            // Keep task alive so join doesn't exit early
+            std::future::pending::<()>().await;
+            return;
+        }
+        let mut backoff_secs = 1u64;
+        loop {
+            let ws_book = polymarket_client_sdk::clob::ws::Client::default();
+            let stream = match ws_book.subscribe_orderbook(book_token_ids.clone()) {
+                Ok(s) => {
+                    info!("orderbook WS connected");
+                    backoff_secs = 1; // reset on success
+                    s
                 }
                 Err(e) => {
-                    error!(error = %e, "orderbook stream error");
+                    warn!(error = %e, backoff = backoff_secs, "failed to subscribe to orderbook, retrying");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                    backoff_secs = (backoff_secs * 2).min(60);
+                    continue;
+                }
+            };
+            let mut stream = std::pin::pin!(stream);
+
+            while let Some(result) = stream.next().await {
+                match result {
+                    Ok(update) => {
+                        if tx_book.send(EngineEvent::BookUpdate(update)).await.is_err() {
+                            info!("engine channel closed, orderbook task exiting");
+                            return;
+                        }
+                    }
+                    Err(e) => {
+                        error!(error = %e, "orderbook stream error");
+                    }
                 }
             }
+            warn!(backoff = backoff_secs, "orderbook stream ended, reconnecting");
+            tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+            backoff_secs = (backoff_secs * 2).min(60);
         }
-        info!("orderbook stream ended");
     });
 
     // User events WS (authenticated — requires API credentials)
@@ -222,6 +316,7 @@ async fn main() -> Result<()> {
     let signer_addr = signer.address();
 
     let user_task = tokio::spawn(async move {
+        // Parse credentials once (deterministic, no need to redo on reconnect)
         let (key, secret, passphrase) = match (
             std::env::var("POLYMARKET_API_KEY"),
             std::env::var("POLYMARKET_API_SECRET"),
@@ -243,55 +338,72 @@ async fn main() -> Result<()> {
             }
         };
 
-        let credentials =
-            polymarket_client_sdk::auth::Credentials::new(api_key, secret, passphrase);
+        let mut backoff_secs = 1u64;
+        loop {
+            let credentials = polymarket_client_sdk::auth::Credentials::new(
+                api_key,
+                secret.clone(),
+                passphrase.clone(),
+            );
 
-        let ws_user = polymarket_client_sdk::clob::ws::Client::default();
-        let ws_user = match ws_user.authenticate(credentials, signer_addr) {
-            Ok(c) => c,
-            Err(e) => {
-                error!(error = %e, "WS authentication failed");
-                return;
-            }
-        };
-        info!("authenticated WebSocket for user events");
-
-        let stream = match ws_user.subscribe_user_events(vec![]) {
-            Ok(s) => s,
-            Err(e) => {
-                error!(error = %e, "failed to subscribe to user events");
-                return;
-            }
-        };
-        let mut stream = std::pin::pin!(stream);
-
-        while let Some(result) = stream.next().await {
-            match result {
-                Ok(WsMessage::Trade(trade)) => {
-                    if tx_user
-                        .send(EngineEvent::TradeConfirmed(trade))
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Ok(WsMessage::Order(order)) => {
-                    if tx_user
-                        .send(EngineEvent::OrderUpdate(order))
-                        .await
-                        .is_err()
-                    {
-                        break;
-                    }
-                }
-                Ok(_) => {}
+            let ws_user = polymarket_client_sdk::clob::ws::Client::default();
+            let ws_user = match ws_user.authenticate(credentials, signer_addr) {
+                Ok(c) => c,
                 Err(e) => {
-                    error!(error = %e, "user events stream error");
+                    warn!(error = %e, backoff = backoff_secs, "WS authentication failed, retrying");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                    backoff_secs = (backoff_secs * 2).min(60);
+                    continue;
+                }
+            };
+
+            let stream = match ws_user.subscribe_user_events(vec![]) {
+                Ok(s) => {
+                    info!("authenticated WebSocket for user events");
+                    backoff_secs = 1; // reset on success
+                    s
+                }
+                Err(e) => {
+                    warn!(error = %e, backoff = backoff_secs, "failed to subscribe to user events, retrying");
+                    tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+                    backoff_secs = (backoff_secs * 2).min(60);
+                    continue;
+                }
+            };
+            let mut stream = std::pin::pin!(stream);
+
+            while let Some(result) = stream.next().await {
+                match result {
+                    Ok(WsMessage::Trade(trade)) => {
+                        if tx_user
+                            .send(EngineEvent::TradeConfirmed(trade))
+                            .await
+                            .is_err()
+                        {
+                            info!("engine channel closed, user events task exiting");
+                            return;
+                        }
+                    }
+                    Ok(WsMessage::Order(order)) => {
+                        if tx_user
+                            .send(EngineEvent::OrderUpdate(order))
+                            .await
+                            .is_err()
+                        {
+                            info!("engine channel closed, user events task exiting");
+                            return;
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        error!(error = %e, "user events stream error");
+                    }
                 }
             }
+            warn!(backoff = backoff_secs, "user events stream ended, reconnecting");
+            tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+            backoff_secs = (backoff_secs * 2).min(60);
         }
-        info!("user events stream ended");
     });
 
     // Tick timer
@@ -321,10 +433,14 @@ async fn main() -> Result<()> {
     user_task.abort();
     tick_task.abort();
     dashboard_task.abort();
+    redeemer_task.abort();
     if let Some(task) = copy_task {
         task.abort();
     }
     if let Some(task) = scorer_task {
+        task.abort();
+    }
+    if let Some(task) = btc_task {
         task.abort();
     }
 

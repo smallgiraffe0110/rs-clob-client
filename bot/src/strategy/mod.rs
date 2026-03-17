@@ -8,6 +8,7 @@ use crate::position::Position;
 
 /// Actions a strategy can emit — the engine/order manager executes them.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Variants are part of the strategy API; not all are emitted yet
 pub enum StrategyAction {
     PlaceOrder {
         token_id: U256,

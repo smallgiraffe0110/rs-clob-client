@@ -54,6 +54,11 @@ impl OrderManager {
         Ok(())
     }
 
+    /// Execute a single action and propagate errors (unlike execute() which swallows them).
+    pub async fn execute_strict(&self, action: StrategyAction) -> Result<()> {
+        self.execute_one(action).await
+    }
+
     async fn execute_one(&self, action: StrategyAction) -> Result<()> {
         match action {
             StrategyAction::PlaceOrder {
@@ -63,7 +68,7 @@ impl OrderManager {
                 size,
                 taker,
             } => {
-                self.place_order(token_id, side, price, size, taker).await?;
+                let _ = self.place_order(token_id, side, price, size, taker, !taker).await?;
             }
             StrategyAction::CancelOrder { order_id } => {
                 self.cancel_order(&order_id).await?;
@@ -82,7 +87,8 @@ impl OrderManager {
         price: Decimal,
         size: Decimal,
         taker: bool,
-    ) -> Result<()> {
+        post_only: bool,
+    ) -> Result<String> {
         let side_str = match side {
             Side::Buy => "BUY",
             Side::Sell => "SELL",
@@ -102,7 +108,7 @@ impl OrderManager {
                 order_type = order_type_str,
                 "would place order"
             );
-            return Ok(());
+            return Ok("dry-run".into());
         }
 
         info!(
@@ -114,6 +120,14 @@ impl OrderManager {
             "placing order"
         );
 
+        // Round size down to whole shares to satisfy Polymarket's decimal precision
+        // requirements on maker/taker amounts (size * price must have <= 2 decimals)
+        let size = size.trunc();
+        if size <= Decimal::ZERO {
+            info!("order size rounded to zero, skipping");
+            return Ok("zero-size".into());
+        }
+
         let signable = self
             .client
             .limit_order()
@@ -122,7 +136,7 @@ impl OrderManager {
             .price(price)
             .size(size)
             .order_type(order_type)
-            .post_only(!taker)
+            .post_only(post_only)
             .build()
             .await
             .context("building order")?;
@@ -154,16 +168,29 @@ impl OrderManager {
             self.orders_by_token
                 .entry(token_id)
                 .or_default()
-                .push(order_id);
+                .push(order_id.clone());
+            Ok(order_id)
         } else {
+            let msg = format!("{:?}", response.error_msg);
             warn!(
                 order_id = %response.order_id,
-                error = ?response.error_msg,
+                error = %msg,
                 "order rejected"
             );
+            anyhow::bail!("order rejected: {msg}")
         }
+    }
 
-        Ok(())
+    /// Place a GTC order that can cross the book (no post_only restriction).
+    /// Returns the order_id on success. Used by btc_trader for book placement.
+    pub async fn place_gtc_crossing(
+        &self,
+        token_id: U256,
+        side: Side,
+        price: Decimal,
+        size: Decimal,
+    ) -> Result<String> {
+        self.place_order(token_id, side, price, size, false, false).await
     }
 
     async fn cancel_order(&self, order_id: &str) -> Result<()> {
@@ -178,16 +205,16 @@ impl OrderManager {
             Ok(resp) => {
                 if !resp.canceled.is_empty() {
                     info!(order_id = %order_id, "order canceled");
+                    self.remove_order(order_id);
                 }
                 if let Some(reason) = resp.not_canceled.get(order_id) {
-                    warn!(order_id = %order_id, reason = %reason, "order not canceled");
+                    warn!(order_id = %order_id, reason = %reason, "order not canceled, keeping in tracking");
                 }
             }
             Err(e) => {
-                warn!(order_id = %order_id, error = %e, "cancel request failed");
+                warn!(order_id = %order_id, error = %e, "cancel request failed, keeping in tracking");
             }
         }
-        self.remove_order(order_id);
         Ok(())
     }
 
@@ -229,23 +256,29 @@ impl OrderManager {
                     not_canceled = resp.not_canceled.len(),
                     "batch cancel complete"
                 );
+                // Only remove orders that were actually canceled
+                for id in &resp.canceled {
+                    self.remove_order(id);
+                }
+                if !resp.not_canceled.is_empty() {
+                    warn!(
+                        not_canceled = ?resp.not_canceled,
+                        "some orders not canceled, keeping in tracking"
+                    );
+                }
             }
             Err(e) => {
-                warn!(token_id = %token_id, error = %e, "batch cancel failed");
+                warn!(token_id = %token_id, error = %e, "batch cancel failed, keeping all in tracking");
             }
-        }
-
-        for id in &order_ids {
-            self.remove_order(id);
         }
         Ok(())
     }
 
     fn remove_order(&self, order_id: &str) {
-        if let Some((_, order)) = self.live_orders.remove(order_id) {
-            if let Some(mut ids) = self.orders_by_token.get_mut(&order.token_id) {
-                ids.retain(|id| id != order_id);
-            }
+        if let Some((_, order)) = self.live_orders.remove(order_id)
+            && let Some(mut ids) = self.orders_by_token.get_mut(&order.token_id)
+        {
+            ids.retain(|id| id != order_id);
         }
     }
 

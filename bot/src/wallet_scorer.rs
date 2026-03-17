@@ -1,7 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use futures::stream::{self, StreamExt};
 use polymarket_client_sdk::data::types::request::{
     ClosedPositionsRequest, TraderLeaderboardRequest,
 };
@@ -53,7 +52,8 @@ impl WalletScorer {
         info!("wallet scorer starting");
 
         // Load previous results from disk so copy tracker has data immediately
-        if let Some(wallets) = Self::load_from_disk(self.config.scorer_interval_secs * 2) {
+        // Use cached wallets for up to 1 hour across restarts (scorer will refresh in background)
+        if let Some(wallets) = Self::load_from_disk(3600) {
             info!(count = wallets.len(), "loaded scored wallets from disk");
             *self.scored.write().await = wallets;
         }
@@ -78,20 +78,37 @@ impl WalletScorer {
         let mut offset = 0i32;
         let max_offset = MAX_CLOSED_PAGES * 50;
 
-        loop {
-            let req = match ClosedPositionsRequest::builder()
-                .user(address)
-                .limit(50)
-            {
-                Ok(b) => match b.offset(offset) {
-                    Ok(b) => b.build(),
-                    Err(_) => break,
-                },
+        while let Ok(b) = ClosedPositionsRequest::builder()
+            .user(address)
+            .limit(50)
+        {
+            let req = match b.offset(offset) {
+                Ok(b) => b.build(),
                 Err(_) => break,
             };
 
-            match self.data_client.closed_positions(&req).await {
-                Ok(positions) => {
+            // Retry with backoff on rate limit (429)
+            let mut attempt = 0u32;
+            let positions_result = loop {
+                match self.data_client.closed_positions(&req).await {
+                    Ok(positions) => break Some(positions),
+                    Err(e) => {
+                        let err_str = e.to_string();
+                        if err_str.contains("429") && attempt < 3 {
+                            attempt += 1;
+                            let wait = tokio::time::Duration::from_millis(1000 * 2u64.pow(attempt));
+                            debug!(address = %address, attempt, wait_ms = wait.as_millis(), "rate limited, backing off");
+                            tokio::time::sleep(wait).await;
+                        } else {
+                            debug!(address = %address, error = %e, "failed to fetch closed positions");
+                            break None;
+                        }
+                    }
+                }
+            };
+
+            match positions_result {
+                Some(positions) => {
                     let count = positions.len();
                     all_closed.extend(positions);
                     if count < 50 {
@@ -106,15 +123,10 @@ impl WalletScorer {
                         );
                         break;
                     }
+                    // Rate limit between pagination calls
+                    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
                 }
-                Err(e) => {
-                    debug!(
-                        address = %address,
-                        error = %e,
-                        "failed to fetch closed positions"
-                    );
-                    break;
-                }
+                None => break,
             }
         }
 
@@ -152,6 +164,28 @@ impl WalletScorer {
             return None;
         }
 
+        // Hard filter: reject wallets with negative total PnL
+        if total_pnl <= Decimal::ZERO {
+            debug!(
+                address = %address,
+                total_pnl = %total_pnl,
+                "skipping candidate: negative total PnL"
+            );
+            return None;
+        }
+
+        // Hard filter: reject wallets with 100% win rate and 0 losses.
+        // These are typically market-maker bots or redemption arb accounts,
+        // not genuine predictive traders we want to copy.
+        if losses == 0 {
+            debug!(
+                address = %address,
+                wins = wins,
+                "skipping candidate: zero losses (likely bot/arb account)"
+            );
+            return None;
+        }
+
         let win_rate = wins as f64 / trade_count as f64;
 
         // profit_factor = sum(positive_pnl) / abs(sum(negative_pnl))
@@ -168,14 +202,27 @@ impl WalletScorer {
             .try_into()
             .unwrap_or(0.0);
 
-        // Composite score:
-        //   avg_pnl * 0.30 + win_rate * 0.25 + profit_factor * 0.25 + volume * 0.20
-        // avg_pnl_component: $5 avg profit per trade = max score
+        // Composite score — favor consistency and skill over raw whale size:
+        //   win_rate       * 0.20  (diminishing returns above 80% — very high WR = range grinder)
+        //   profit_factor  * 0.30  (risk-adjusted: how much winners exceed losers)
+        //   avg_pnl/trade  * 0.25  (edge per trade, not total capital deployed)
+        //   trade_count    * 0.15  (statistical significance — more trades = more reliable)
+        //   total_pnl      * 0.10  (tiebreaker, capped low so whales don't dominate)
+        let total_pnl_f64: f64 = total_pnl.try_into().unwrap_or(0.0);
+        let total_pnl_component = (total_pnl_f64 / 500.0).clamp(0.0, 1.0);
         let avg_pnl_component = (avg_pnl_per_trade / 5.0).clamp(0.0, 1.0);
-        let score = avg_pnl_component * 0.3
-            + win_rate * 0.25
-            + (profit_factor / 5.0).min(1.0) * 0.25
-            + (trade_count as f64 / 100.0).min(1.0) * 0.2;
+        // Diminishing returns on win rate above 80% — crypto range grinders
+        // hit 95%+ WR which shouldn't give them a big scoring edge
+        let wr_component = if win_rate > 0.80 {
+            0.80 + (win_rate - 0.80) * 0.25 // 95% WR → 0.8375 instead of 0.95
+        } else {
+            win_rate
+        };
+        let score = wr_component * 0.20
+            + (profit_factor / 5.0).min(1.0) * 0.30
+            + avg_pnl_component * 0.25
+            + (trade_count as f64 / 100.0).min(1.0) * 0.15
+            + total_pnl_component * 0.10;
 
         Some(ScoredWallet {
             address,
@@ -188,50 +235,78 @@ impl WalletScorer {
         })
     }
 
-    async fn score_candidates(&self) {
-        let category = match self.config.auto_discover_category.to_uppercase().as_str() {
+    fn parse_category(s: &str) -> LeaderboardCategory {
+        match s.to_uppercase().as_str() {
             "POLITICS" => LeaderboardCategory::Politics,
             "SPORTS" => LeaderboardCategory::Sports,
             "CRYPTO" => LeaderboardCategory::Crypto,
             "CULTURE" => LeaderboardCategory::Culture,
             _ => LeaderboardCategory::Overall,
-        };
+        }
+    }
 
-        // Fetch top 50 candidates by PnL (weekly) as candidate pool
-        let Ok(req) = TraderLeaderboardRequest::builder()
-            .category(category)
-            .time_period(TimePeriod::Week)
-            .order_by(LeaderboardOrderBy::Pnl)
-            .limit(50)
-        else {
-            warn!("failed to build leaderboard request");
+    async fn score_candidates(&self) {
+        // Build category list: use multi-category if set, else fall back to single
+        let categories: Vec<LeaderboardCategory> =
+            if !self.config.auto_discover_categories.is_empty() {
+                self.config
+                    .auto_discover_categories
+                    .iter()
+                    .map(|s| Self::parse_category(s))
+                    .collect()
+            } else {
+                vec![Self::parse_category(&self.config.auto_discover_category)]
+            };
+
+        // Fetch candidates from each category and deduplicate
+        let mut seen = std::collections::HashSet::new();
+        let mut all_candidates = Vec::new();
+
+        for category in &categories {
+            let Ok(req) = TraderLeaderboardRequest::builder()
+                .category(*category)
+                .time_period(TimePeriod::Week)
+                .order_by(LeaderboardOrderBy::Pnl)
+                .limit(50)
+            else {
+                warn!(?category, "failed to build leaderboard request");
+                continue;
+            };
+            let req = req.build();
+
+            match self.data_client.leaderboard(&req).await {
+                Ok(entries) => {
+                    info!(category = ?category, count = entries.len(), "fetched leaderboard");
+                    for entry in entries {
+                        if seen.insert(entry.proxy_wallet) {
+                            all_candidates.push(entry);
+                        }
+                    }
+                }
+                Err(e) => {
+                    warn!(category = ?category, error = %e, "failed to fetch leaderboard");
+                }
+            }
+        }
+
+        let candidates = all_candidates;
+        if candidates.is_empty() {
+            warn!("no candidates found across all categories");
             return;
-        };
-        let req = req.build();
+        }
+        info!(total = candidates.len(), categories = categories.len(), "scoring candidate wallets");
 
-        let candidates = match self.data_client.leaderboard(&req).await {
-            Ok(entries) => {
-                info!(count = entries.len(), "scoring candidate wallets");
-                entries
+        // Score candidates sequentially to respect API rate limits
+        let mut scored_wallets: Vec<ScoredWallet> = Vec::new();
+        for (i, c) in candidates.iter().enumerate() {
+            if let Some(sw) = self.score_candidate(c.proxy_wallet, c.user_name.clone()).await {
+                scored_wallets.push(sw);
             }
-            Err(e) => {
-                warn!(error = %e, "failed to fetch leaderboard for scoring");
-                return;
+            // Throttle between candidates to avoid 429s
+            if i + 1 < candidates.len() {
+                tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
             }
-        };
-
-        // Score candidates concurrently (up to 5 at a time)
-        let candidate_inputs: Vec<_> = candidates
-            .iter()
-            .map(|c| (c.proxy_wallet, c.user_name.clone()))
-            .collect();
-
-        let mut scored_wallets: Vec<ScoredWallet> = stream::iter(candidate_inputs)
-            .map(|(addr, name)| self.score_candidate(addr, name))
-            .buffer_unordered(5)
-            .filter_map(|opt| async { opt })
-            .collect()
-            .await;
+        }
 
         // Sort by score descending
         scored_wallets.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal));
@@ -250,6 +325,7 @@ impl WalletScorer {
                 rank = i + 1,
                 address = %w.address,
                 username = ?w.username,
+                total_pnl = %w.total_pnl,
                 win_rate = format!("{:.1}%", w.win_rate * 100.0),
                 profit_factor = format!("{:.2}", w.profit_factor),
                 trades = w.trade_count,

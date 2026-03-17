@@ -59,11 +59,15 @@ All updates → broadcast::Sender<DashboardUpdate> → WebSocket clients (dashbo
 
 ### Wallet Scoring Formula
 ```
-score = avg_pnl_component * 0.30      // $5 avg profit/trade = max
-      + win_rate * 0.25
-      + profit_factor_component * 0.25 // profit_factor/5, capped at 1.0
-      + volume_component * 0.20       // trade_count/100, capped at 1.0
+wr_component = win_rate (if ≤80%), else 0.80 + (win_rate - 0.80) * 0.25
+score = wr_component * 0.20         // diminishing returns above 80% (penalizes range grinders)
+      + profit_factor/5 * 0.30      // risk-adjusted: how much winners exceed losers
+      + avg_pnl_component * 0.25    // $5 avg profit/trade = max (edge per trade)
+      + trade_count/100 * 0.15      // statistical significance
+      + total_pnl/500 * 0.10        // tiebreaker (capped low to avoid whale bias)
 ```
+- Hard filters: positive total PnL required, zero-loss wallets rejected (bot/arb accounts)
+- Multi-category discovery: pulls from OVERALL + POLITICS + CRYPTO + SPORTS leaderboards
 
 ### Dashboard (dashboard_html.rs)
 - Single HTML file embedded as a Rust string constant

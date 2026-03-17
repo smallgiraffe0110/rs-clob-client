@@ -35,6 +35,11 @@ body {
   flex-direction: column;
   overflow: hidden;
 }
+@media (max-height: 900px) {
+  .kpi-card .kpi-value { font-size: 18px; }
+  .kpi-card { padding: 6px 12px; }
+  .kpi-card canvas.kpi-spark { height: 18px; }
+}
 
 /* ── Top bar ── */
 #topbar {
@@ -148,11 +153,12 @@ body {
 /* ── Main grid ── */
 #main {
   display: grid;
-  grid-template-columns: 280px 1fr 300px;
+  grid-template-columns: 260px 1fr 280px;
   gap: 1px;
   flex: 1;
   min-height: 0;
   background: var(--border);
+  overflow: hidden;
 }
 .panel {
   background: var(--panel);
@@ -172,7 +178,20 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s;
 }
+.panel-header:hover { background: rgba(79,172,254,0.04); }
+.panel-header .chevron {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform 0.2s ease;
+  flex-shrink: 0;
+}
+.panel.collapsed .panel-header .chevron { transform: rotate(-90deg); }
+.panel.collapsed > :not(.panel-header) { display: none !important; }
 .panel-header .accent {
   width: 3px;
   height: 14px;
@@ -180,7 +199,6 @@ body {
   flex-shrink: 0;
 }
 .panel-header .count {
-  margin-left: auto;
   background: var(--border);
   padding: 1px 7px;
   border-radius: 10px;
@@ -201,12 +219,15 @@ body {
   flex-direction: column;
   background: var(--border);
   gap: 1px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ── Leaders table ── */
-#leaders-panel { flex: 0 0 auto; max-height: 260px; overflow: hidden; }
+#leaders-panel { flex: 0 1 auto; max-height: 30%; overflow: hidden; }
 #leaders-scroll { overflow-y: auto; flex: 1; }
-#leaders-table { width: 100%; border-collapse: collapse; }
+#leaders-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+#leaders-table td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #leaders-table th {
   text-align: left;
   padding: 6px 14px;
@@ -254,12 +275,13 @@ body {
 }
 
 /* ── Copy targets ── */
-#copy-targets-panel { flex: 1; min-height: 0; }
-#copy-targets-scroll { flex: 1; overflow-y: auto; }
-#copy-targets-table { width: 100%; border-collapse: collapse; }
+#copy-targets-panel { flex: 1 1 0; min-height: 60px; overflow: hidden; }
+#copy-targets-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; }
+#copy-targets-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+#copy-targets-table td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #copy-targets-table th {
   text-align: left;
-  padding: 6px 14px;
+  padding: 6px 10px;
   color: var(--muted);
   font-size: 10px;
   font-weight: 600;
@@ -270,7 +292,7 @@ body {
   top: 0;
   background: var(--panel);
 }
-#copy-targets-table td { padding: 6px 14px; font-size: 12px; }
+#copy-targets-table td { padding: 6px 10px; font-size: 12px; }
 #copy-targets-table tbody tr { transition: background 0.15s; border-bottom: 1px solid var(--border); }
 #copy-targets-table tbody tr:hover { background: rgba(79,172,254,0.03); }
 .delta-pos { color: var(--green); font-weight: 600; font-family: monospace; }
@@ -293,7 +315,7 @@ body {
 .target-price { font-family: monospace; color: var(--muted); }
 
 /* ── Alerts ── */
-#copy-events-panel { flex: 0 0 auto; max-height: 100px; overflow-y: auto; display: none; }
+#copy-events-panel { flex: 0 0 auto; max-height: 15%; overflow-y: auto; display: none; }
 .copy-event {
   padding: 6px 14px;
   font-size: 12px;
@@ -316,8 +338,8 @@ body {
 .copy-event .event-detail { color: var(--muted); font-size: 11px; margin-left: auto; font-family: monospace; }
 
 /* ── Leader trades ── */
-#trade-feed-panel { flex: 0 0 auto; max-height: 180px; }
-#trade-feed-scroll { overflow-y: auto; max-height: 148px; }
+#trade-feed-panel { flex: 0 1 auto; max-height: 25%; overflow: hidden; }
+#trade-feed-scroll { overflow-y: auto; flex: 1; }
 #trade-feed-table { width: 100%; border-collapse: collapse; }
 #trade-feed-table th {
   text-align: left;
@@ -345,11 +367,15 @@ body {
   flex-direction: column;
   background: var(--border);
   gap: 1px;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* ── Positions ── */
-#positions-panel { flex: 0 0 auto; }
-#positions-table { width: 100%; border-collapse: collapse; }
+#positions-panel { flex: 0 1 auto; max-height: 45%; overflow: hidden; }
+#positions-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; }
+#positions-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+#positions-table td:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 #positions-table th {
   text-align: left;
   padding: 6px 14px;
@@ -359,6 +385,9 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.5px;
   border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--panel);
 }
 #positions-table td { padding: 5px 14px; font-size: 12px; font-family: monospace; }
 .pnl-pos { color: var(--green); font-weight: 600; }
@@ -408,7 +437,7 @@ body {
 <!-- KPI Cards -->
 <div id="kpi-strip">
   <div class="kpi-card">
-    <span class="kpi-label">Daily PnL</span>
+    <span class="kpi-label">Total PnL</span>
     <span class="kpi-value" id="kpi-pnl" style="color:var(--green)">$0.00</span>
     <canvas class="kpi-spark" id="pnl-spark"></canvas>
   </div>
@@ -445,7 +474,7 @@ body {
 <div id="main">
   <!-- Left: PnL Chart -->
   <div id="pnl-panel" class="panel">
-    <div class="panel-header"><span class="accent" style="background:var(--green)"></span> PnL &amp; Exposure</div>
+    <div class="panel-header" onclick="togglePanel(this)"><span class="accent" style="background:var(--green)"></span> PnL<span class="chevron">&#9660;</span></div>
     <div id="pnl-main-chart" style="flex:1;padding:12px;">
       <canvas id="pnl-main-canvas"></canvas>
     </div>
@@ -454,7 +483,7 @@ body {
   <!-- Center: Copy Trading -->
   <div id="center-panel">
     <div id="leaders-panel" class="panel">
-      <div class="panel-header"><span class="accent" style="background:var(--purple)"></span> Leaders <span class="count" id="leader-count-badge">0</span></div>
+      <div class="panel-header" onclick="togglePanel(this)"><span class="accent" style="background:var(--purple)"></span> Leaders <span class="count" id="leader-count-badge">0</span><span class="chevron">&#9660;</span></div>
       <div id="leaders-scroll">
         <table id="leaders-table">
           <thead><tr>
@@ -471,15 +500,16 @@ body {
       </div>
     </div>
     <div id="copy-events-panel" class="panel" style="display:none">
-      <div class="panel-header"><span class="accent" style="background:var(--red)"></span> Alerts</div>
+      <div class="panel-header" onclick="togglePanel(this)"><span class="accent" style="background:var(--red)"></span> Alerts<span class="chevron">&#9660;</span></div>
       <div id="copy-events"></div>
     </div>
     <div id="copy-targets-panel" class="panel">
-      <div class="panel-header"><span class="accent" style="background:var(--yellow)"></span> Copy Targets <span class="count" id="target-count-badge">0</span></div>
+      <div class="panel-header" onclick="togglePanel(this)"><span class="accent" style="background:var(--yellow)"></span> Copy Targets <span class="count" id="target-count-badge">0</span><span class="chevron">&#9660;</span></div>
       <div id="copy-targets-scroll">
         <table id="copy-targets-table">
           <thead><tr>
             <th>Market</th>
+            <th style="text-align:right">Leaders</th>
             <th style="text-align:right">Resolves</th>
             <th style="text-align:right">Target</th>
             <th style="text-align:right">Ours</th>
@@ -487,13 +517,13 @@ body {
             <th style="text-align:right">Price</th>
           </tr></thead>
           <tbody id="copy-targets-body">
-            <tr><td colspan="6" class="empty-state">Waiting for leader data...</td></tr>
+            <tr><td colspan="7" class="empty-state">Waiting for leader data...</td></tr>
           </tbody>
         </table>
       </div>
     </div>
     <div id="trade-feed-panel" class="panel">
-      <div class="panel-header"><span class="accent" style="background:var(--green)"></span> Leader Trades</div>
+      <div class="panel-header" onclick="togglePanel(this)"><span class="accent" style="background:var(--green)"></span> Leader Trades<span class="chevron">&#9660;</span></div>
       <div id="trade-feed-scroll">
         <table id="trade-feed-table">
           <thead><tr>
@@ -515,19 +545,21 @@ body {
   <!-- Right: Positions + Activity -->
   <div id="right-panel">
     <div id="positions-panel" class="panel">
-      <div class="panel-header"><span class="accent" style="background:var(--green)"></span> Positions</div>
-      <table id="positions-table">
-        <thead><tr>
-          <th>Market</th>
-          <th style="text-align:right">Size</th>
-          <th style="text-align:right">Entry</th>
-          <th style="text-align:right">PnL</th>
-        </tr></thead>
-        <tbody id="positions-body"></tbody>
-      </table>
+      <div class="panel-header" onclick="togglePanel(this)"><span class="accent" style="background:var(--green)"></span> Positions<span class="chevron">&#9660;</span></div>
+      <div id="positions-scroll">
+        <table id="positions-table">
+          <thead><tr>
+            <th>Market</th>
+            <th style="text-align:right">Size</th>
+            <th style="text-align:right">Entry</th>
+            <th style="text-align:right">PnL</th>
+          </tr></thead>
+          <tbody id="positions-body"></tbody>
+        </table>
+      </div>
     </div>
     <div id="activity-panel" class="panel">
-      <div class="panel-header"><span class="accent" style="background:var(--text)"></span> Activity</div>
+      <div class="panel-header" onclick="togglePanel(this)"><span class="accent" style="background:var(--text)"></span> Activity<span class="chevron">&#9660;</span></div>
       <div id="activity-log"></div>
     </div>
   </div>
@@ -540,7 +572,7 @@ var exposureHistory = [];
 var tokenTitles = {};
 var maxExposure = 200;
 var dailyLossLimit = 20;
-var MAX_PNL = 120;
+var MAX_PNL = 600;
 var MAX_LOG = 200;
 
 // ── DOM refs ──
@@ -583,16 +615,73 @@ function now() {
   return new Date().toLocaleTimeString('en-US', {hour12:false, hour:'2-digit', minute:'2-digit', second:'2-digit'});
 }
 function fmtDollar(v) {
+  if (v === undefined || v === null) return '$0.00';
   var n = parseFloat(v);
-  if (isNaN(n)) return '$' + v;
+  if (isNaN(n)) return '$0.00';
   var sign = n < 0 ? '-' : '';
   return sign + '$' + Math.abs(n).toFixed(2);
 }
+
+// ── Color helper: hex or rgb() -> rgba string ──
+function toRgba(color, alpha) {
+  if (color.charAt(0) === '#') {
+    var hex = color.slice(1);
+    if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+    var r = parseInt(hex.slice(0,2), 16);
+    var g = parseInt(hex.slice(2,4), 16);
+    var b = parseInt(hex.slice(4,6), 16);
+    return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
+  }
+  // Handle rgb(r,g,b) format
+  var m = color.match(/rgb\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*\)/);
+  if (m) return 'rgba(' + m[1] + ',' + m[2] + ',' + m[3] + ',' + alpha + ')';
+  return color;
+}
+
+// ── HTML escaping for XSS prevention ──
+function escapeHtml(s) {
+  if (s === undefined || s === null) return '';
+  if (typeof s !== 'string') s = String(s);
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ── Collapsible panels ──
+function togglePanel(header) {
+  var panel = header.parentElement;
+  panel.classList.toggle('collapsed');
+  var isCollapsed = panel.classList.contains('collapsed');
+  // Handle copy-events-panel which uses inline display:none
+  if (panel.id === 'copy-events-panel' && !isCollapsed) {
+    panel.style.display = 'flex';
+  }
+  // Redraw PnL chart when expanding
+  if (panel.id === 'pnl-panel' && !isCollapsed) {
+    setTimeout(drawMainPnl, 50);
+  }
+  // Save state to localStorage
+  var id = panel.id;
+  if (id) {
+    var collapsed = JSON.parse(localStorage.getItem('collapsed') || '{}');
+    collapsed[id] = isCollapsed;
+    localStorage.setItem('collapsed', JSON.stringify(collapsed));
+  }
+}
+// Restore collapsed state on load
+(function() {
+  var collapsed = JSON.parse(localStorage.getItem('collapsed') || '{}');
+  for (var id in collapsed) {
+    if (collapsed[id]) {
+      var el = document.getElementById(id);
+      if (el) el.classList.add('collapsed');
+    }
+  }
+})();
 
 // ── Mini sparkline renderer ──
 function drawMiniSpark(canvas, pts, color) {
   if (!pts || pts.length < 2) return;
   var ctx = canvas.getContext('2d');
+  if (!ctx) return;
   var dpr = window.devicePixelRatio || 1;
   var rect = canvas.getBoundingClientRect();
   canvas.width = rect.width * dpr;
@@ -619,8 +708,8 @@ function drawMiniSpark(canvas, pts, color) {
   ctx.lineTo(0, h);
   ctx.closePath();
   var grad = ctx.createLinearGradient(0, 0, 0, h);
-  grad.addColorStop(0, color.replace(')', ',0.25)').replace('rgb', 'rgba'));
-  grad.addColorStop(1, color.replace(')', ',0)').replace('rgb', 'rgba'));
+  grad.addColorStop(0, toRgba(color, 0.25));
+  grad.addColorStop(1, toRgba(color, 0));
   ctx.fillStyle = grad;
   ctx.fill();
 
@@ -637,20 +726,28 @@ function drawMiniSpark(canvas, pts, color) {
 }
 
 // ── WebSocket ──
+var _wsBackoff = 2000;
 function connect() {
   var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
   var ws = new WebSocket(proto + '//' + location.host + '/ws');
   ws.onopen = function() {
+    _wsBackoff = 2000; // reset on success
     $wsDot.className = 'ws-dot connected';
     $wsLabel.textContent = 'connected';
+  };
+  ws.onerror = function() {
+    $wsDot.className = 'ws-dot disconnected';
   };
   ws.onclose = function() {
     $wsDot.className = 'ws-dot disconnected';
     $wsLabel.textContent = 'reconnecting...';
-    setTimeout(connect, 2000);
+    setTimeout(connect, _wsBackoff);
+    _wsBackoff = Math.min(_wsBackoff * 1.5, 30000);
   };
   ws.onmessage = function(e) {
-    var msg = JSON.parse(e.data);
+    try {
+      var msg = JSON.parse(e.data);
+    } catch (err) { return; }
     switch (msg.type) {
       case 'Snapshot':       handleSnapshot(msg); break;
       case 'BookSnapshot':   handleBook(msg); break;
@@ -679,9 +776,13 @@ function handleSnapshot(d) {
   $expLimit.textContent = 'of ' + fmtDollar(maxExposure) + ' limit';
   $lossLimit.textContent = 'of ' + fmtDollar(dailyLossLimit) + ' limit';
 
-  updatePnl(d.daily_pnl);
+  updatePnl(d.total_pnl);
   updateExposure(d.total_exposure);
 
+  // Process leaders first so tokenTitles map is populated for positions
+  if (d.leaders || d.tracked_tokens) {
+    handleLeaders(d);
+  }
   renderPositions(d.positions);
   d.orders.forEach(function(o) {
     addActivity(now(), o.side, o.price, o.size, 'LIVE');
@@ -732,23 +833,28 @@ function tokenLabel(id) {
 }
 
 function handlePosition(msg) {
-  var row = document.querySelector('#positions-body tr[data-token="' + msg.token_id + '"]');
+  // Find existing row by iterating (safe for any token_id characters)
+  var row = null;
+  var rows = $posBody.getElementsByTagName('tr');
+  for (var i = 0; i < rows.length; i++) {
+    if (rows[i].dataset.token === msg.token_id) { row = rows[i]; break; }
+  }
   if (!row) { row = document.createElement('tr'); row.dataset.token = msg.token_id; $posBody.appendChild(row); }
   var realized = parseFloat(msg.realized_pnl) || 0;
   var unrealized = parseFloat(msg.unrealized_pnl) || 0;
   var totalPnl = realized + unrealized;
   var cls = totalPnl >= 0 ? 'pnl-pos' : 'pnl-neg';
   row.innerHTML =
-    '<td title="' + msg.token_id + '">' + tokenLabel(msg.token_id) + '</td>' +
-    '<td style="text-align:right">' + msg.net_size + '</td>' +
-    '<td style="text-align:right">' + msg.avg_entry_price + '</td>' +
+    '<td title="' + escapeHtml(msg.token_id) + '">' + escapeHtml(tokenLabel(msg.token_id)) + '</td>' +
+    '<td style="text-align:right">' + escapeHtml(msg.net_size) + '</td>' +
+    '<td style="text-align:right">' + escapeHtml(parseFloat(msg.avg_entry_price).toFixed(4)) + '</td>' +
     '<td style="text-align:right" class="' + cls + '">' + fmtDollar(totalPnl) + '</td>';
   row.classList.add('row-flash');
   setTimeout(function() { row.classList.remove('row-flash'); }, 800);
 }
 
 function handleTick(msg) {
-  updatePnl(msg.daily_pnl);
+  updatePnl(msg.total_pnl);
   updateExposure(msg.total_exposure);
   drawMainPnl();
 }
@@ -780,17 +886,17 @@ function handleLeaders(msg) {
       var barW = Math.round((scoreVal || 0) * 100);
       var barColor = scoreCls === 'score-top' ? 'var(--green)' : scoreCls === 'score-mid' ? 'var(--yellow)' : 'var(--muted)';
       row.innerHTML =
-        '<td><span class="leader-name">' + name + '</span><span class="leader-addr" title="' + l.address + '">' + shortAddr(l.address) + '</span></td>' +
+        '<td><span class="leader-name">' + escapeHtml(name) + '</span><span class="leader-addr" title="' + escapeHtml(l.address) + '">' + escapeHtml(shortAddr(l.address)) + '</span></td>' +
         '<td class="' + cls + '">' + fmtDollar(l.pnl) + '</td>' +
-        '<td class="leader-wr">' + l.win_rate + '</td>' +
-        '<td class="leader-score ' + scoreCls + '">' + l.score + '<div class="score-bar-track"><div class="score-bar-fill" style="width:' + barW + '%;background:' + barColor + '"></div></div></td>' +
+        '<td class="leader-wr">' + escapeHtml(l.win_rate) + '</td>' +
+        '<td class="leader-score ' + scoreCls + '">' + escapeHtml(l.score) + '<div class="score-bar-track"><div class="score-bar-fill" style="width:' + barW + '%;background:' + barColor + '"></div></div></td>' +
         '<td class="leader-positions">' + l.num_positions + '</td>';
       $leadBody.appendChild(row);
     });
   }
 
   if (tokens.length === 0) {
-    $copyBody.innerHTML = '<tr><td colspan="6" class="empty-state">No positions to track</td></tr>';
+    $copyBody.innerHTML = '<tr><td colspan="7" class="empty-state">No positions to track</td></tr>';
   } else {
     $copyBody.innerHTML = '';
     tokens.sort(function(a, b) { return Math.abs(parseFloat(b.delta)) - Math.abs(parseFloat(a.delta)); });
@@ -810,14 +916,17 @@ function handleLeaders(msg) {
       var resolvesCls = '';
       if (resolves === '< 1d' || resolves === '1d') resolvesCls = 'color:var(--green);font-weight:600';
       else if (resolves === '2d') resolvesCls = 'color:var(--yellow)';
+      var lc = t.leader_count || 0;
+      var lcCls = lc >= 5 ? 'color:var(--green);font-weight:600' : lc >= 3 ? 'color:var(--yellow)' : 'color:var(--muted)';
       row.innerHTML =
-        '<td title="' + t.token_id + '">' + title +
+        '<td title="' + escapeHtml(t.token_id) + '">' + escapeHtml(title) +
           '<div class="convergence-bar"><div class="fill ' + barCls + '" style="width:' + convergence + '%"></div></div></td>' +
-        '<td style="text-align:right;font-family:monospace;' + resolvesCls + '">' + resolves + '</td>' +
-        '<td style="text-align:right;font-family:monospace">' + t.target_size + '</td>' +
-        '<td style="text-align:right;font-family:monospace">' + t.our_size + '</td>' +
-        '<td style="text-align:right" class="' + dcls + '">' + deltaSign + t.delta + '</td>' +
-        '<td style="text-align:right" class="target-price">' + t.leader_price + '</td>';
+        '<td style="text-align:right;font-family:monospace;' + lcCls + '">' + lc + '</td>' +
+        '<td style="text-align:right;font-family:monospace;' + resolvesCls + '">' + escapeHtml(resolves) + '</td>' +
+        '<td style="text-align:right;font-family:monospace">' + escapeHtml(t.target_size) + '</td>' +
+        '<td style="text-align:right;font-family:monospace">' + escapeHtml(t.our_size) + '</td>' +
+        '<td style="text-align:right" class="' + dcls + '">' + deltaSign + escapeHtml(t.delta) + '</td>' +
+        '<td style="text-align:right" class="target-price">' + escapeHtml(t.leader_price) + '</td>';
       $copyBody.appendChild(row);
     });
   }
@@ -835,12 +944,12 @@ function handleLeaderTrade(msg) {
   var nameScore = parseFloat(msg.leader_score) || 0;
   var nameCls = nameScore >= 0.6 ? 'score-top' : nameScore >= 0.4 ? 'score-mid' : 'score-low';
   row.innerHTML =
-    '<td class="trade-time">' + msg.timestamp + '</td>' +
-    '<td class="' + nameCls + '" title="' + msg.leader_address + '">' + name + '</td>' +
-    '<td class="' + sideCls + '">' + msg.side + '</td>' +
-    '<td title="' + msg.token_title + '">' + title + '</td>' +
-    '<td style="text-align:right;font-family:monospace">' + msg.size + '</td>' +
-    '<td style="text-align:right;font-family:monospace">' + msg.price + '</td>';
+    '<td class="trade-time">' + escapeHtml(msg.timestamp) + '</td>' +
+    '<td class="' + nameCls + '" title="' + escapeHtml(msg.leader_address) + '">' + escapeHtml(name) + '</td>' +
+    '<td class="' + sideCls + '">' + escapeHtml(msg.side) + '</td>' +
+    '<td title="' + escapeHtml(msg.token_title) + '">' + escapeHtml(title) + '</td>' +
+    '<td style="text-align:right;font-family:monospace">' + escapeHtml(msg.size) + '</td>' +
+    '<td style="text-align:right;font-family:monospace">' + escapeHtml(msg.price) + '</td>';
   row.classList.add('row-flash');
   $tradeFeed.prepend(row);
   tradeCount++;
@@ -850,7 +959,9 @@ function handleLeaderTrade(msg) {
 // ── Copy events ──
 var MAX_EVENTS = 20;
 function handleCopyEvent(msg) {
-  $copyEventsPanel.style.display = 'flex';
+  if (!$copyEventsPanel.classList.contains('collapsed')) {
+    $copyEventsPanel.style.display = 'flex';
+  }
   var div = document.createElement('div');
   var cls = msg.event_type === 'STOP_LOSS' ? 'event-stop-loss' : 'event-price-guard';
   var label = msg.event_type === 'STOP_LOSS' ? 'STOP LOSS' : 'PRICE GUARD';
@@ -858,16 +969,22 @@ function handleCopyEvent(msg) {
   var title = msg.token_title.length > 28 ? msg.token_title.slice(0, 28) + '\u2026' : msg.token_title;
   div.innerHTML =
     '<span class="event-badge">' + label + '</span>' +
-    '<span class="event-title">' + title + '</span>' +
-    '<span class="event-detail">' + msg.details + '</span>';
+    '<span class="event-title">' + escapeHtml(title) + '</span>' +
+    '<span class="event-detail">' + escapeHtml(msg.details) + '</span>';
   $copyEvents.prepend(div);
   while ($copyEvents.children.length > MAX_EVENTS) $copyEvents.removeChild($copyEvents.lastChild);
 }
 
-// ── Main PnL chart ──
+// ── Main PnL chart (Polymarket-style) ──
+var _pnlAnimId = 0;
 function drawMainPnl() {
+  cancelAnimationFrame(_pnlAnimId);
+  _pnlAnimId = requestAnimationFrame(function() { _drawPnlFrame(); });
+}
+function _drawPnlFrame() {
   var canvas = $pnlMainCanvas;
   var ctx = canvas.getContext('2d');
+  if (!ctx) return;
   var dpr = window.devicePixelRatio || 1;
   var rect = canvas.getBoundingClientRect();
   canvas.width = rect.width * dpr;
@@ -877,77 +994,108 @@ function drawMainPnl() {
   ctx.clearRect(0, 0, w, h);
 
   var pts = pnlHistory.map(function(p) { return p.v; });
-  var expPts = exposureHistory.map(function(p) { return p.v; });
-
   if (pts.length < 2) {
     ctx.fillStyle = '#6e7a88';
-    ctx.font = '12px -apple-system, sans-serif';
+    ctx.font = '13px -apple-system, sans-serif';
     ctx.textAlign = 'center';
     ctx.fillText('Waiting for PnL data\u2026', w / 2, h / 2);
     return;
   }
 
-  // ── PnL range ──
+  // Direction: compare first vs last value
+  var firstVal = pts[0];
+  var lastVal = pts[pts.length - 1];
+  var isUp = lastVal >= firstVal;
+  var lineColor = isUp ? '#2dd4a0' : '#f0546e';
+  var fillTop = isUp ? 'rgba(45,212,160,0.25)' : 'rgba(240,84,110,0.25)';
+  var fillBot = isUp ? 'rgba(45,212,160,0)' : 'rgba(240,84,110,0)';
+
+  // Range with small padding
   var pMin = pts[0], pMax = pts[0];
-  for (var i = 1; i < pts.length; i++) { if (pts[i] < pMin) pMin = pts[i]; if (pts[i] > pMax) pMax = pts[i]; }
-  if (pMin > 0) pMin = 0;
-  if (pMax < 0) pMax = 0;
-  var pRange = pMax - pMin || 0.01;
+  for (var i = 1; i < pts.length; i++) {
+    if (pts[i] < pMin) pMin = pts[i];
+    if (pts[i] > pMax) pMax = pts[i];
+  }
+  var pRange = pMax - pMin;
+  if (pRange < 0.01) pRange = 0.01;
+  var pad = pRange * 0.1;
+  pMin -= pad; pMax += pad;
+  pRange = pMax - pMin;
 
-  // ── Exposure range ──
-  var eMax = 0;
-  for (var i = 0; i < expPts.length; i++) { if (expPts[i] > eMax) eMax = expPts[i]; }
-  if (eMax < 1) eMax = maxExposure;
-
-  // ── Layout ──
-  var padL = 48, padR = 50, padT = 20, padB = 28;
+  // Layout
+  var padL = 8, padR = 8, padT = 40, padB = 22;
   var cw = w - padL - padR, ch = h - padT - padB;
 
-  function pnlY(v) { return padT + ch - ((v - pMin) / pRange) * ch; }
-  function expY(v) { return padT + ch - (v / eMax) * ch; }
+  function yVal(v) { return padT + ch - ((v - pMin) / pRange) * ch; }
 
-  // ── Gridlines + left Y-axis (PnL) ──
-  ctx.strokeStyle = 'rgba(30,39,51,0.8)';
+  // Subtle horizontal grid (3 lines)
+  ctx.strokeStyle = 'rgba(30,39,51,0.6)';
   ctx.lineWidth = 0.5;
-  var gridCount = 5;
-  ctx.fillStyle = '#6e7a88';
-  ctx.font = '10px monospace';
-  ctx.textAlign = 'right';
-  for (var g = 0; g <= gridCount; g++) {
-    var gv = pMin + (g / gridCount) * pRange;
-    var gy = pnlY(gv);
+  for (var g = 1; g <= 3; g++) {
+    var gy = padT + (g / 4) * ch;
     ctx.beginPath(); ctx.moveTo(padL, gy); ctx.lineTo(w - padR, gy); ctx.stroke();
-    var label = (gv >= 0 ? '+' : '') + '$' + gv.toFixed(2);
-    ctx.fillText(label, padL - 6, gy + 3);
   }
 
-  // ── Right Y-axis (Exposure) ──
-  ctx.textAlign = 'left';
-  ctx.fillStyle = 'rgba(79,172,254,0.5)';
-  for (var g = 0; g <= gridCount; g++) {
-    var ev = (g / gridCount) * eMax;
-    var ey = expY(ev);
-    ctx.fillText('$' + ev.toFixed(0), w - padR + 6, ey + 3);
+  // Build path points
+  var pathPts = [];
+  for (var i = 0; i < pts.length; i++) {
+    var x = padL + (i / (pts.length - 1)) * cw;
+    var y = yVal(pts[i]);
+    pathPts.push({ x: x, y: y });
   }
 
-  // ── Zero line ──
-  var zeroY = pnlY(0);
-  ctx.strokeStyle = 'rgba(110,122,136,0.5)';
+  // Gradient fill under curve
+  ctx.beginPath();
+  ctx.moveTo(pathPts[0].x, padT + ch);
+  for (var i = 0; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y);
+  ctx.lineTo(pathPts[pathPts.length - 1].x, padT + ch);
+  ctx.closePath();
+  var grad = ctx.createLinearGradient(0, padT, 0, padT + ch);
+  grad.addColorStop(0, fillTop);
+  grad.addColorStop(1, fillBot);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // Main line
+  ctx.beginPath();
+  ctx.moveTo(pathPts[0].x, pathPts[0].y);
+  for (var i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y);
+  ctx.strokeStyle = lineColor;
+  ctx.lineWidth = 2;
+  ctx.lineJoin = 'round';
+  ctx.stroke();
+
+  // Current value dot + glow
+  var lastPt = pathPts[pathPts.length - 1];
+  ctx.beginPath();
+  ctx.arc(lastPt.x, lastPt.y, 6, 0, Math.PI * 2);
+  ctx.fillStyle = isUp ? 'rgba(45,212,160,0.2)' : 'rgba(240,84,110,0.2)';
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(lastPt.x, lastPt.y, 3.5, 0, Math.PI * 2);
+  ctx.fillStyle = lineColor;
+  ctx.fill();
+
+  // Dashed line from dot to right edge
+  ctx.setLineDash([3, 3]);
+  ctx.strokeStyle = isUp ? 'rgba(45,212,160,0.3)' : 'rgba(240,84,110,0.3)';
   ctx.lineWidth = 1;
-  ctx.setLineDash([4, 3]);
-  ctx.beginPath(); ctx.moveTo(padL, zeroY); ctx.lineTo(w - padR, zeroY); ctx.stroke();
+  ctx.beginPath();
+  ctx.moveTo(lastPt.x, lastPt.y);
+  ctx.lineTo(w - padR, lastPt.y);
+  ctx.stroke();
   ctx.setLineDash([]);
 
-  // ── Time axis (bottom) ──
+  // Time axis
   if (pnlHistory.length >= 2) {
     var tStart = pnlHistory[0].t;
     var tEnd = pnlHistory[pnlHistory.length - 1].t;
     var tSpan = tEnd - tStart;
     if (tSpan > 0) {
-      ctx.fillStyle = '#6e7a88';
+      ctx.fillStyle = 'rgba(110,122,136,0.5)';
       ctx.font = '9px monospace';
       ctx.textAlign = 'center';
-      var numLabels = Math.min(6, Math.floor(cw / 50));
+      var numLabels = Math.min(5, Math.floor(cw / 55));
       for (var ti = 0; ti <= numLabels; ti++) {
         var frac = ti / numLabels;
         var tx = padL + frac * cw;
@@ -955,164 +1103,43 @@ function drawMainPnl() {
         var dt = new Date(tms);
         var hh = ('0' + dt.getHours()).slice(-2);
         var mm = ('0' + dt.getMinutes()).slice(-2);
-        ctx.fillText(hh + ':' + mm, tx, h - padB + 14);
-        ctx.strokeStyle = 'rgba(30,39,51,0.4)';
-        ctx.lineWidth = 0.5;
-        ctx.beginPath(); ctx.moveTo(tx, padT); ctx.lineTo(tx, padT + ch); ctx.stroke();
+        ctx.fillText(hh + ':' + mm, tx, h - 4);
       }
     }
   }
 
-  // ── Exposure area (blue, subtle) ──
-  if (expPts.length >= 2) {
-    var expPathPts = [];
-    for (var i = 0; i < expPts.length; i++) {
-      var x = padL + (i / (expPts.length - 1)) * cw;
-      var y = expY(expPts[i]);
-      expPathPts.push({x: x, y: y});
-    }
-    ctx.beginPath();
-    ctx.moveTo(expPathPts[0].x, padT + ch);
-    for (var i = 0; i < expPathPts.length; i++) ctx.lineTo(expPathPts[i].x, expPathPts[i].y);
-    ctx.lineTo(expPathPts[expPathPts.length - 1].x, padT + ch);
-    ctx.closePath();
-    var gradE = ctx.createLinearGradient(0, padT, 0, padT + ch);
-    gradE.addColorStop(0, 'rgba(79,172,254,0.18)');
-    gradE.addColorStop(1, 'rgba(79,172,254,0.03)');
-    ctx.fillStyle = gradE;
-    ctx.fill();
-    // Exposure line
-    ctx.beginPath();
-    ctx.moveTo(expPathPts[0].x, expPathPts[0].y);
-    for (var i = 1; i < expPathPts.length; i++) ctx.lineTo(expPathPts[i].x, expPathPts[i].y);
-    ctx.strokeStyle = 'rgba(79,172,254,0.35)';
-    ctx.lineWidth = 1;
-    ctx.stroke();
-  }
-
-  // ── Build PnL path points ──
-  var pathPts = [];
-  for (var i = 0; i < pts.length; i++) {
-    var x = padL + (i / (pts.length - 1)) * cw;
-    var y = pnlY(pts[i]);
-    pathPts.push({ x: x, y: y });
-  }
-
-  // ── PnL area fill — green above zero, red below zero ──
-  // Positive fill
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(padL, padT, cw, zeroY - padT);
-  ctx.clip();
-  ctx.beginPath();
-  ctx.moveTo(pathPts[0].x, pathPts[0].y);
-  for (var i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y);
-  ctx.lineTo(pathPts[pathPts.length-1].x, zeroY);
-  ctx.lineTo(pathPts[0].x, zeroY);
-  ctx.closePath();
-  var gradG = ctx.createLinearGradient(0, padT, 0, zeroY);
-  gradG.addColorStop(0, 'rgba(45,212,160,0.3)');
-  gradG.addColorStop(1, 'rgba(45,212,160,0.05)');
-  ctx.fillStyle = gradG;
-  ctx.fill();
-  ctx.restore();
-
-  // Negative fill
-  ctx.save();
-  ctx.beginPath();
-  ctx.rect(padL, zeroY, cw, padT + ch - zeroY);
-  ctx.clip();
-  ctx.beginPath();
-  ctx.moveTo(pathPts[0].x, pathPts[0].y);
-  for (var i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y);
-  ctx.lineTo(pathPts[pathPts.length-1].x, zeroY);
-  ctx.lineTo(pathPts[0].x, zeroY);
-  ctx.closePath();
-  var gradR = ctx.createLinearGradient(0, zeroY, 0, padT + ch);
-  gradR.addColorStop(0, 'rgba(240,84,110,0.05)');
-  gradR.addColorStop(1, 'rgba(240,84,110,0.3)');
-  ctx.fillStyle = gradR;
-  ctx.fill();
-  ctx.restore();
-
-  // ── PnL line ──
-  var lastVal = pts[pts.length - 1];
-  var lineColor = lastVal >= 0 ? '#2dd4a0' : '#f0546e';
-  ctx.beginPath();
-  ctx.moveTo(pathPts[0].x, pathPts[0].y);
-  for (var i = 1; i < pathPts.length; i++) ctx.lineTo(pathPts[i].x, pathPts[i].y);
-  ctx.strokeStyle = lineColor;
-  ctx.lineWidth = 2;
-  ctx.stroke();
-
-  // ── High / Low markers ──
-  var hiIdx = 0, loIdx = 0;
-  for (var i = 1; i < pts.length; i++) {
-    if (pts[i] > pts[hiIdx]) hiIdx = i;
-    if (pts[i] < pts[loIdx]) loIdx = i;
-  }
-  // High marker
-  if (pMax !== 0 || pMin !== 0) {
-    var hiY = pathPts[hiIdx].y;
-    ctx.strokeStyle = 'rgba(45,212,160,0.4)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath(); ctx.moveTo(padL, hiY); ctx.lineTo(w - padR, hiY); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(45,212,160,0.6)';
-    ctx.font = '9px monospace';
-    ctx.textAlign = 'left';
-    ctx.fillText('H ' + (pts[hiIdx] >= 0 ? '+' : '') + '$' + pts[hiIdx].toFixed(2), padL + 2, hiY - 3);
-
-    // Low marker
-    var loY = pathPts[loIdx].y;
-    ctx.strokeStyle = 'rgba(240,84,110,0.4)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([3, 3]);
-    ctx.beginPath(); ctx.moveTo(padL, loY); ctx.lineTo(w - padR, loY); ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.fillStyle = 'rgba(240,84,110,0.6)';
-    ctx.fillText('L ' + (pts[loIdx] >= 0 ? '+' : '') + '$' + pts[loIdx].toFixed(2), padL + 2, loY + 10);
-  }
-
-  // ── Current value dot ──
-  var lastPt = pathPts[pathPts.length - 1];
-  ctx.beginPath();
-  ctx.arc(lastPt.x, lastPt.y, 4, 0, Math.PI * 2);
-  ctx.fillStyle = lineColor;
-  ctx.fill();
-  ctx.beginPath();
-  ctx.arc(lastPt.x, lastPt.y, 8, 0, Math.PI * 2);
-  ctx.fillStyle = lastVal >= 0 ? 'rgba(45,212,160,0.2)' : 'rgba(240,84,110,0.2)';
-  ctx.fill();
-
-  // ── Top-left overlay: current PnL + exposure ──
-  var pnlText = (lastVal >= 0 ? '+' : '') + '$' + lastVal.toFixed(2);
-  ctx.font = 'bold 16px monospace';
+  // Big PnL value top-left
+  var pnlText = (lastVal >= 0 ? '+$' : '-$') + Math.abs(lastVal).toFixed(2);
+  ctx.font = 'bold 20px -apple-system, sans-serif';
   ctx.textAlign = 'left';
   ctx.fillStyle = lineColor;
-  ctx.fillText(pnlText, padL + 4, padT + 14);
+  ctx.fillText(pnlText, padL + 4, 24);
 
-  if (expPts.length > 0) {
-    var lastExp = expPts[expPts.length - 1];
-    ctx.font = '11px monospace';
-    ctx.fillStyle = 'rgba(79,172,254,0.7)';
-    ctx.fillText('Exp $' + lastExp.toFixed(2), padL + 4, padT + 28);
-  }
+  // Delta indicator
+  var delta = lastVal - firstVal;
+  var deltaText = (delta >= 0 ? '+$' : '-$') + Math.abs(delta).toFixed(2);
+  ctx.font = '11px -apple-system, sans-serif';
+  ctx.fillStyle = isUp ? 'rgba(45,212,160,0.7)' : 'rgba(240,84,110,0.7)';
+  var mainW = ctx.measureText(pnlText).width;
+  ctx.fillText(deltaText, padL + 4 + mainW + 8, 24);
 }
 
 // ── Render positions ──
 function renderPositions(positions) {
   $posBody.innerHTML = '';
+  if (!positions || positions.length === 0) return;
   positions.forEach(function(p) {
     var row = document.createElement('tr');
     row.dataset.token = p.token_id;
-    var cls = parseFloat(p.realized_pnl) >= 0 ? 'pnl-pos' : 'pnl-neg';
+    var realized = parseFloat(p.realized_pnl) || 0;
+    var unrealized = parseFloat(p.unrealized_pnl) || 0;
+    var pnl = realized + unrealized;
+    var cls = pnl >= 0 ? 'pnl-pos' : 'pnl-neg';
     row.innerHTML =
-      '<td title="' + p.token_id + '">' + tokenLabel(p.token_id) + '</td>' +
-      '<td style="text-align:right">' + p.net_size + '</td>' +
-      '<td style="text-align:right">' + p.avg_entry_price + '</td>' +
-      '<td style="text-align:right" class="' + cls + '">' + fmtDollar(p.realized_pnl) + '</td>';
+      '<td title="' + escapeHtml(p.token_id) + '">' + escapeHtml(tokenLabel(p.token_id)) + '</td>' +
+      '<td style="text-align:right">' + escapeHtml(p.net_size) + '</td>' +
+      '<td style="text-align:right">' + escapeHtml(parseFloat(p.avg_entry_price).toFixed(4)) + '</td>' +
+      '<td style="text-align:right" class="' + cls + '">' + fmtDollar(pnl) + '</td>';
     $posBody.appendChild(row);
   });
 }
@@ -1123,11 +1150,11 @@ function addActivity(time, side, price, size, status) {
   row.className = 'activity-row row-flash';
   var sc = side === 'BUY' ? 'buy' : 'sell';
   row.innerHTML =
-    '<span class="time">' + time + '</span>' +
-    '<span class="' + sc + '">' + side + '</span>' +
-    '<span>' + price + '</span>' +
-    '<span>' + size + '</span>' +
-    '<span class="status">' + status + '</span>';
+    '<span class="time">' + escapeHtml(time) + '</span>' +
+    '<span class="' + sc + '">' + escapeHtml(side) + '</span>' +
+    '<span>' + escapeHtml(price) + '</span>' +
+    '<span>' + escapeHtml(size) + '</span>' +
+    '<span class="status">' + escapeHtml(status) + '</span>';
   $actLog.prepend(row);
   while ($actLog.children.length > MAX_LOG) $actLog.removeChild($actLog.lastChild);
 }

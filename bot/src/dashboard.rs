@@ -5,15 +5,17 @@ use axum::extract::State;
 use axum::response::{Html, IntoResponse, Json};
 use axum::routing::get;
 use axum::Router;
-use polymarket_client_sdk::types::U256;
+use polymarket_client_sdk::types::{Decimal, U256};
 use serde::Serialize;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, RwLock};
 use tracing::info;
 
 use crate::config::RiskConfig;
 use crate::market_state::MarketState;
 use crate::order_manager::OrderManager;
 use crate::position::PositionTracker;
+
+type LeaderCache = Arc<RwLock<Option<(Vec<LeaderInfo>, Vec<TrackedToken>)>>>;
 
 // ---------------------------------------------------------------------------
 // Update messages broadcast from Engine -> WebSocket clients
@@ -50,7 +52,7 @@ pub enum DashboardUpdate {
         unrealized_pnl: String,
     },
     TickSummary {
-        daily_pnl: String,
+        total_pnl: String,
         total_exposure: String,
     },
     LeaderUpdate {
@@ -93,6 +95,7 @@ pub struct TrackedToken {
     pub leader_price: String,
     pub delta: String,
     pub days_remaining: String,
+    pub leader_count: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -110,7 +113,7 @@ struct FullSnapshot {
     #[serde(rename = "type")]
     kind: String,
     dry_run: bool,
-    daily_pnl: String,
+    total_pnl: String,
     total_exposure: String,
     max_exposure: String,
     daily_loss_limit: String,
@@ -118,6 +121,8 @@ struct FullSnapshot {
     books: Vec<BookData>,
     positions: Vec<PositionData>,
     orders: Vec<OrderData>,
+    leaders: Vec<LeaderInfo>,
+    tracked_tokens: Vec<TrackedToken>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -135,6 +140,7 @@ struct PositionData {
     net_size: String,
     avg_entry_price: String,
     realized_pnl: String,
+    unrealized_pnl: String,
     total_bought: String,
     total_sold: String,
 }
@@ -161,6 +167,7 @@ pub struct DashboardState {
     active_tokens: Vec<U256>,
     dry_run: bool,
     risk_config: RiskConfig,
+    last_leaders: LeaderCache,
 }
 
 impl DashboardState {
@@ -181,6 +188,7 @@ impl DashboardState {
             active_tokens,
             dry_run,
             risk_config,
+            last_leaders: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -217,13 +225,20 @@ impl DashboardState {
             .all_positions()
             .into_iter()
             .filter(|pos| !pos.net_size.is_zero())
-            .map(|pos| PositionData {
-                token_id: pos.token_id.to_string(),
-                net_size: pos.net_size.to_string(),
-                avg_entry_price: pos.avg_entry_price.to_string(),
-                realized_pnl: pos.realized_pnl.to_string(),
-                total_bought: pos.total_bought.to_string(),
-                total_sold: pos.total_sold.to_string(),
+            .map(|pos| {
+                let mark = self.market_state.get_book(&pos.token_id)
+                    .and_then(|b| b.midpoint())
+                    .unwrap_or(pos.avg_entry_price);
+                let unrealized = pos.unrealized_pnl(mark);
+                PositionData {
+                    token_id: pos.token_id.to_string(),
+                    net_size: pos.net_size.to_string(),
+                    avg_entry_price: pos.avg_entry_price.to_string(),
+                    realized_pnl: pos.realized_pnl.to_string(),
+                    unrealized_pnl: unrealized.to_string(),
+                    total_bought: pos.total_bought.to_string(),
+                    total_sold: pos.total_sold.to_string(),
+                }
             })
             .collect();
 
@@ -240,17 +255,42 @@ impl DashboardState {
             }
         }
 
+        let (leaders, tracked_tokens) = self
+            .last_leaders
+            .try_read()
+            .ok()
+            .and_then(|guard| guard.clone())
+            .unwrap_or_default();
+
+        let realized = self.positions.daily_pnl();
+        let unrealized = self.positions.total_unrealized_pnl(|token_id| {
+            self.market_state.get_book(token_id).and_then(|b| b.midpoint())
+        });
+        let total_pnl = realized + unrealized;
+
         FullSnapshot {
             kind: "Snapshot".into(),
             dry_run: self.dry_run,
-            daily_pnl: self.positions.daily_pnl().to_string(),
+            total_pnl: total_pnl.to_string(),
             total_exposure: self.positions.total_exposure().to_string(),
-            max_exposure: self.risk_config.max_total_exposure_usd.to_string(),
-            daily_loss_limit: self.risk_config.daily_loss_limit_usd.to_string(),
+            max_exposure: if self.risk_config.initial_bankroll > Decimal::ZERO {
+                let bankroll = (self.risk_config.initial_bankroll + self.positions.daily_pnl()).max(Decimal::ZERO);
+                (bankroll * self.risk_config.max_exposure_pct).to_string()
+            } else {
+                self.risk_config.max_total_exposure_usd.to_string()
+            },
+            daily_loss_limit: if self.risk_config.initial_bankroll > Decimal::ZERO {
+                let bankroll = (self.risk_config.initial_bankroll + self.positions.daily_pnl()).max(Decimal::ZERO);
+                (bankroll * self.risk_config.daily_loss_limit_pct).to_string()
+            } else {
+                self.risk_config.daily_loss_limit_usd.to_string()
+            },
             active_tokens: self.active_tokens.iter().map(|t| t.to_string()).collect(),
             books,
             positions,
             orders,
+            leaders,
+            tracked_tokens,
         }
     }
 }
@@ -292,6 +332,12 @@ async fn handle_socket(mut socket: WebSocket, state: DashboardState) {
             result = rx.recv() => {
                 match result {
                     Ok(update) => {
+                        // Cache leader data so future snapshots include it
+                        if let DashboardUpdate::LeaderUpdate { ref leaders, ref tracked_tokens } = update
+                            && let Ok(mut guard) = state.last_leaders.try_write()
+                        {
+                            *guard = Some((leaders.clone(), tracked_tokens.clone()));
+                        }
                         let Ok(json) = serde_json::to_string(&update) else { continue };
                         if socket.send(Message::Text(json.into())).await.is_err() {
                             break;
@@ -315,15 +361,15 @@ async fn handle_socket(mut socket: WebSocket, state: DashboardState) {
 // Server entry point
 // ---------------------------------------------------------------------------
 
-pub async fn start(port: u16, state: DashboardState) -> anyhow::Result<()> {
+pub async fn start(bind_addr: &str, port: u16, state: DashboardState) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/api/snapshot", get(snapshot_handler))
         .route("/ws", get(ws_handler))
         .with_state(state);
 
-    let listener = tokio::net::TcpListener::bind(("0.0.0.0", port)).await?;
-    info!("dashboard at http://localhost:{port}");
+    let listener = tokio::net::TcpListener::bind((bind_addr, port)).await?;
+    info!("dashboard at http://{bind_addr}:{port}");
     axum::serve(listener, app).await?;
     Ok(())
 }

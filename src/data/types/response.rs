@@ -10,6 +10,23 @@ use serde_with::{DefaultOnNull, DisplayFromStr, NoneAsEmptyString, serde_as};
 use super::{ActivityType, Side};
 use crate::types::{Address, B256, Decimal, U256};
 
+/// Deserializes an optional NaiveDate, treating empty strings as None.
+fn deserialize_optional_date<'de, D>(deserializer: D) -> Result<Option<NaiveDate>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let opt: Option<String> = Option::deserialize(deserializer)?;
+    match opt {
+        None => Ok(None),
+        Some(s) if s.trim().is_empty() => Ok(None),
+        Some(s) => NaiveDate::parse_from_str(&s, "%Y-%m-%d")
+            .or_else(|_| NaiveDate::parse_from_str(&s, "%Y-%m-%dT%H:%M:%SZ"))
+            .or_else(|_| NaiveDate::parse_from_str(&s, "%Y-%m-%dT%H:%M:%S%.fZ"))
+            .map(Some)
+            .map_err(serde::de::Error::custom),
+    }
+}
+
 /// Deserializes an optional Side, treating empty strings as None.
 fn deserialize_optional_side<'de, D>(deserializer: D) -> Result<Option<Side>, D::Error>
 where
@@ -117,8 +134,9 @@ pub struct Position {
     pub opposite_outcome: String,
     /// Asset identifier of the opposite outcome.
     pub opposite_asset: U256,
-    /// Market end/resolution date.
-    pub end_date: NaiveDate,
+    /// Market end/resolution date (None when the API returns an empty string).
+    #[serde(default, deserialize_with = "deserialize_optional_date")]
+    pub end_date: Option<NaiveDate>,
     /// Whether this is a negative risk market.
     pub negative_risk: bool,
 }
